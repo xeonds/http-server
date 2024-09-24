@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Http Server</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        .file-list {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .file-list th,
+        .file-list td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .file-list th {
+            background-color: #f2f2f2;
+        }
+
+        .upload-area {
+            margin-bottom: 20px;
+        }
+
+        .footer {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #555;
+        }
+
+        .icon {
+            margin-right: 8px;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Http Server</h1>
+    <p>
+    <nav id="breadcrumb"></nav>
+    </p>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const breadcrumb = document.getElementById('breadcrumb');
+            const path = "{{.Path}}";
+            const parts = path.split('/').filter(part => part);
+            let currentPath = '/';
+
+            const rootLink = document.createElement('a');
+            rootLink.href = '/';
+            rootLink.innerText = '$';
+            breadcrumb.appendChild(rootLink);
+
+            parts.forEach((part, _) => {
+                currentPath += `${part}/`;
+                const link = document.createElement('a');
+                link.href = currentPath;
+                link.innerText = part;
+
+                const separator = document.createTextNode(' / ');
+
+                breadcrumb.appendChild(separator);
+                breadcrumb.appendChild(link);
+            });
+        });
+    </script>
+
+    {{if gt .UploadLimit 0}}
+    <div class="upload-area">
+        <button id="uploadBtn">Upload Files</button>
+        <input type="file" id="fileInput" multiple style="display: none;" />
+        <script>
+            document.getElementById('uploadBtn').addEventListener('click', () => {
+                document.getElementById('fileInput').click();
+            });
+
+            document.getElementById('fileInput').addEventListener('change', function () {
+                const files = this.files;
+                const uploadLimit = {{.UploadLimit}};
+                let totalSize = 0;
+
+                for (let i = 0; i < files.length; i++) {
+                    totalSize += files[i].size;
+                }
+
+                if (totalSize > uploadLimit) {
+                    alert('Total file size exceeds the upload limit of ' + (uploadLimit / 1024 / 1024).toFixed(2) + ' MB');
+                    return;
+                }
+
+                if (files.length > 0) {
+                    const path = "{{.Path}}";
+                    Promise.all(Array.from(files).map(file => {
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        return fetch(path, {
+                            method: 'POST',
+                            body: formData
+                        });
+                    }))
+                        .then(responses => {
+                            if (responses.every(response => response.ok)) {
+                                alert('Files uploaded successfully');
+                                window.location.reload();
+                            } else {
+                                alert('Failed to upload some files');
+                            }
+                        })
+                        .catch(error => {
+                            alert('Error: ' + error);
+                        });
+                }
+            });
+        </script>
+    </div>
+    {{end}}
+
+    <table class="file-list">
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="selectAll" /></th>
+                <th>Filename</th>
+                <th>Size (bytes)</th>
+                <th>Created At</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- First, list directories -->
+            {{range .Dirs}}
+            <tr>
+                <td><input type="checkbox" class="file-checkbox" value="{{$.Path}}{{.Name}}" /></td>
+                <td>
+                    <span class="icon">📁</span>
+                    <a href="{{$.Path}}{{.Name}}/">{{.Name}}/</a>
+                </td>
+                <td>--</td>
+                <td>{{.CreatedAt}}</td>
+            </tr>
+            {{end}}
+            <!-- Then, list files -->
+            {{range .Files}}
+            <tr>
+                <td><input type="checkbox" class="file-checkbox" value="{{$.Path}}{{.Name}}" /></td>
+                <td>
+                    <span class="icon">📄</span>
+                    <a href="{{$.Path}}{{.Name}}" download>{{.Name}}</a>
+                </td>
+                <td>{{.Size}}</td>
+                <td>{{.CreatedAt}}</td>
+            </tr>
+            {{else}}
+            <tr>
+                <td colspan="5">No files found</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+    <script>
+        document.getElementById('selectAll').addEventListener('change', function () {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = this.checked;
+            });
+        });
+    </script>
+
+    <button id="deleteBtn">Delete</button>
+
+    <div class="footer">
+        <p>Disk Usage: {{.UsedSpace}} / {{.TotalSpace}}</p>
+        <p>Page Load Time: <span id="pageLoadTime"></span> seconds</p>
+    </div>
+
+    <script>
+        window.onload = function () {
+            const loadTime = (performance.now() / 1000).toFixed(2);
+            document.getElementById('pageLoadTime').innerText = loadTime;
+        };
+
+        document.getElementById('deleteBtn').addEventListener('click', function () {
+            const selectedFiles = Array.from(document.querySelectorAll('.file-checkbox:checked')).map(cb => cb.value);
+
+            if (selectedFiles.length === 0) {
+                alert('No files selected');
+            } else if (!confirm(`Are you sure you want to delete ${selectedFiles.length} files? This action cannot be undone.`)) {
+                return;
+            } else {
+                Promise.all(selectedFiles.map(file => new Promise((resolve, reject) =>
+                    fetch(file, { method: 'DELETE' })
+                        .then(response => resolve(file))
+                        .catch(error => reject(`Failed to delete ${file}: ${error}`)))
+                )).then(results => {
+                    alert('Files deleted:\n' + results.join('\n'));
+                    window.location.reload();
+                }).catch(error => {
+                    alert(error);
+                });
+            }
+        });
+    </script>
+
+</body>
+
+</html>
